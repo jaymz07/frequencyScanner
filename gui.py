@@ -15,8 +15,6 @@ from matplotlib.figure import Figure
 
 import numpy as np
 
-import random
-
 import sounddevice as sd
 
 class MyDialog(QtGui.QDialog):
@@ -29,82 +27,252 @@ class MyDialog(QtGui.QDialog):
         
         #--------
         # a figure instance to plot on
-        self.figure = Figure()
+        self.td_figure = Figure()
+        self.fa_figure = Figure()
 
         # this is the Canvas Widget that displays the `figure`
         # it takes the `figure` instance as a parameter to __init__
-        self.canvas = FigureCanvas(self.figure)
+        self.td_canvas = FigureCanvas(self.td_figure)
+        self.fa_canvas = FigureCanvas(self.fa_figure)
 
         # this is the Navigation widget
         # it takes the Canvas widget and a parent
-        self.toolbar = NavigationToolbar(self.canvas, self)
+        self.td_toolbar = NavigationToolbar(self.td_canvas, self)
+        self.fa_toolbar = NavigationToolbar(self.fa_canvas, self)
         #--------        
         
         self.ui.setupUi(self)
         
-        self.ui.plot_layout.addWidget(self.toolbar)
-        self.ui.plot_layout.addWidget(self.canvas)
+        self.ui.plot_layout.addWidget(self.td_toolbar)
+        self.ui.fa_plotLayout.addWidget(self.fa_toolbar)
+        self.ui.plot_layout.addWidget(self.td_canvas)
+        self.ui.fa_plotLayout.addWidget(self.fa_canvas)
         
         self.ui.scanButton.clicked.connect(self.scan)
+        self.ui.analysisButton.clicked.connect(self.plotFreqAnalysis)
         
-    def plotClear(self, data):
+        self.ui.combNumModes_box.valueChanged.connect(self.updateCombStatusText)
+        self.ui.combNumCycles_box.valueChanged.connect(self.updateCombStatusText)
+        self.updateCombStatusText()
+        
+        print self.ui.analysisMethod_box.currentIndex()
+        
+    def plotClear(self,fig,canv, data, x=None):
         # create an axis
-        ax = self.figure.add_subplot(111)
+        ax = fig.add_subplot(111)
 
         # discards the old graph
         ax.clear()
 
         # plot data
-        ax.plot(data)
+        if(x==None):
+            ax.plot(data)
+        else:
+            ax.plot(x,data)
 
         # refresh canvas
-        self.canvas.draw()
+        canv.draw()
     def plotAppend(self, data):
         # create an axis
-        ax = self.figure.add_subplot(111)
+        ax = self.td_figure.add_subplot(111)
         # plot data
         ax.plot(data)
         # refresh canvas
         self.canvas.draw()
-    def plotTriple(self, dat1,dat2,dat3):
-        ax1 = self.figure.add_subplot(311)        
+    def plotTriple(self, fig, canv, dat1,dat2,dat3, x=None):
+        ax1 = fig.add_subplot(311)        
         # discards the old graph
         ax1.clear()
         
-        ax1.plot(dat1)
-
         # plot data
-        ax2 = self.figure.add_subplot(312,sharex=ax1)
-        ax2.plot(dat2)
-        
-        ax3 = self.figure.add_subplot(313,sharex=ax1)
-        ax3.plot(dat3)
-        
-
+        if(x is not None):
+            ax1.plot(x,dat1)
+        else:
+            ax1.plot(dat1)
+        ax2 = fig.add_subplot(312,sharex=ax1)
+        if(x is not None):
+            ax2.plot(x,dat2)
+        else:
+            ax2.plot(dat2)
+        ax3 = fig.add_subplot(313,sharex=ax1)
+        if(x is not None):
+            ax3.plot(x,dat3)
+        else:
+            ax3.plot(dat3)
+            
         # refresh canvas
-        self.canvas.draw()
+        canv.draw()
+    def plotTriple_sy(self,fig, canv, dat1, dat2, dat3, x=None):
+        ax1 = fig.add_subplot(311)        
+        # discards the old graph
+        ax1.clear()
+        
+        # plot data
+        print [len(x),len(dat1)]
+        if(x is not None):
+            ax1.semilogy(x,dat1)
+        else:
+            ax1.semilogy(dat1)
+        ax2 = fig.add_subplot(312,sharex=ax1)
+        if(x is not None):
+            ax2.semilogy(x,dat2)
+        else:
+            ax2.semilogy(dat2)
+        ax3 = fig.add_subplot(313,sharex=ax1)
+        if(x is not None):
+            ax3.semilogy(x,dat3)
+        else:
+            ax3.semilogy(dat3)
+            
+        # refresh canvas
+        canv.draw()
+        
+        return ax1, ax2, ax3
+        
+    def fft(self,datX,datY):
+        rangeX=max(datX) - min(datX)
+        ft = np.fft.fft(datY)
+        return {'f' : [i/rangeX for i in range(1,len(datX)+1)[::-1]], 'y' : ft[::-1]}
         
     def generateTimeAxis(self,scanTime):
         return np.linspace(0,scanTime,scanTime*self.sampleRate)
         
-    def generateFreqSweep(self,startFreq, stopFreq, scanTime, gain):
+    def generateFreqSweep(self,startFreq, stopFreq, scanTime, gain, mode='cont'):
         t = self.generateTimeAxis(scanTime)
-        freq = startFreq + (stopFreq - startFreq)/2/scanTime*t
-        return gain*np.sin(2*np.pi*freq*t)
+        if(mode == 'cont'):
+            freq = startFreq + (stopFreq - startFreq)/2/scanTime*t
+            return gain*np.sin(2*np.pi*freq*t)
+        elif(mode == 'disc'):
+            freq = startFreq + (stopFreq - startFreq)/2/scanTime*t
+            print "Discreet Scan"
+            return gain*np.sin(2*np.pi*freq*t)
+        return 'Sweep Mode ERROR'
+    
+    def generateComb(self, fRep, fStart, numModes, scanTime, mode = 'fixed'):
+        t = self.generateTimeAxis(scanTime)
+        out = np.array([0.0]*len(t))
+        if(mode=='fixed'):
+            for n in range(0,numModes):
+                out += np.sin(2*np.pi*(fStart + n*fRep)*t)
+        elif(mode=='rand'):
+            for n in range(0,numModes):
+                out += np.sin(2*np.pi*(fStart + n*fRep)*t + np.pi*2*np.random.random())
+        else:
+            return "Mode Error in generateComb"
+        return out/max(np.abs(out))
+                
+                
         
     def freqScan(self,startFreq, stopFreq, scanTime, gain):
-        audioSignal = self.generateFreqSweep(startFreq,stopFreq,scanTime,gain)
+        if(self.ui.radio_discSweep.isChecked()):
+            mode = 'disc'
+        if(self.ui.radio_contSweep.isChecked()):
+            mode = 'cont'
+        print mode
+        audioSignal = self.generateFreqSweep(startFreq,stopFreq,scanTime,gain,mode=mode)
         #self.plotClear(audioSignal)
-        recording = sd.playrec(audioSignal, samplerate=self.sampleRate, channels = 2)
-        sd.wait()
-        #self.plotAppend(recording)
-        self.plotTriple(audioSignal,recording[:,0],recording[:,1])        
+        recording = self.playRec(audioSignal)
+        #self.plotAppend(recording)     
         
-        return recording
-        
-    def scan(self):
-        self.freqScan(self.ui.startFreq_box.value(), self.ui.stopFreq_box.value(), self.ui.scanTime_box.value(), self.ui.gainSlider.value()*1.0/100)
+        return recording, audioSignal
     
+    def playRec(self,audioSig):
+        rec = sd.playrec(audioSig,samplerate=self.sampleRate, channels = 2)
+        sd.wait()
+        return rec
+        
+    def waveletAnalysis(self,t, dat, startFreq, stopFreq, numWavs):
+        #sweep = self.generateFreqSweep(startFreq,stopFreq,len(dat)/self.sampleRate,1.0)
+        fOut, rOut = [], []
+        for i in range(1,numWavs+1):
+            f0 = startFreq + i*(stopFreq-startFreq)/ (numWavs+1)
+            t0 = len(dat)/self.sampleRate*(f0- startFreq)/(stopFreq-startFreq)
+            envWidth = float(len(dat)/self.sampleRate)/numWavs
+            env_func = np.exp(-((t-t0)/2/envWidth)**2)
+            sinComp = np.trapz(np.sin(2*np.pi*t*f0)*env_func*dat)
+            cosComp = np.trapz(np.cos(2*np.pi*t*f0)*env_func*dat)
+            fOut.append(f0); rOut.append(np.sqrt(sinComp**2 + cosComp**2));
+            self.ui.fa_progressBar.setValue(int(i/float(numWavs)*100))
+        return [fOut, rOut]
+        
+        
+#----------------------Action Methods, No arguments-----------------------
+    def scan(self):
+        self.lastParam_startFreq = self.ui.startFreq_box.value()
+        self.lastParam_stopFreq  = self.ui.stopFreq_box.value()
+        self.lastParam_scanTime  = self.ui.scanTime_box.value()
+        self.lastParam_gain      = self.ui.gainSlider.value()*.01
+        
+        if(self.ui.radio_sweepScan.isChecked()):
+            self.recording, self.audioSignal = self.freqScan(self.lastParam_startFreq, self.lastParam_stopFreq, self.lastParam_scanTime, self.lastParam_gain)
+            print "cont scan"
+        elif(self.ui.radio_combScan.isChecked()):
+            self.combScan()
+            print "comb scan"
+        else:
+            print "Radio Button Error?"
+          
+        self.plotTriple(self.td_figure,self.td_canvas,self.audioSignal,self.recording[:,0],self.recording[:,1],x=np.linspace(self.lastParam_startFreq,self.lastParam_stopFreq,len(self.audioSignal)))
+        
+        self.ui.numWavelets_box.setMaximum(len(self.recording))
+        
+    def plotFreqAnalysis(self):
+        scanTime = len(self.audioSignal)/self.sampleRate
+        if(self.ui.analysisMethod_box.currentText() == 'Wavelet'):
+            wa_a = self.waveletAnalysis(np.linspace(0,scanTime,len(self.recording)), self.audioSignal, self.lastParam_startFreq, self.lastParam_stopFreq, self.ui.numWavelets_box.value())
+            wa_r1 = self.waveletAnalysis(np.linspace(0,scanTime,len(self.recording)), self.recording[:,0], self.lastParam_startFreq, self.lastParam_stopFreq, self.ui.numWavelets_box.value())        
+            wa_r2 = self.waveletAnalysis(np.linspace(0,scanTime,len(self.recording)), self.recording[:,1], self.lastParam_startFreq, self.lastParam_stopFreq, self.ui.numWavelets_box.value())        
+        
+            ax1,ax2,ax3 = self.plotTriple_sy(self.fa_figure, self.fa_canvas, wa_a[1]/max(wa_a[1]), wa_r1[1]/max(wa_r1[1]), wa_r2[1]/max(wa_r2[1]), x=wa_a[0])
+            ax1.set_xlim(self.lastParam_startFreq, self.lastParam_stopFreq)
+            self.fa_canvas.draw()
+            
+        if(self.ui.analysisMethod_box.currentText() == 'FFT'):
+            t = np.linspace(0,scanTime,len(self.audioSignal))
+            ft_a  = self.fft(t, self.audioSignal)
+            ft_r1 = self.fft(t, self.recording[:,0])
+            ft_r2 = self.fft(t, self.recording[:,1])
+            
+            a_a, a_r1, a_r2 = np.abs(ft_a['y']), np.abs(ft_r1['y']), np.abs(ft_r2['y'])
+            
+            print len(ft_a['f'])
+            print len(a_a)
+            
+            ax1,ax2,ax3 = self.plotTriple_sy(self.fa_figure, self.fa_canvas, a_a/max(a_a), a_r1/max(a_r1), a_r2/max(a_r2), x=ft_a['f'])
+            
+            #print [a_a/max(a_a), a_r1/max(a_r1), a_r2/max(a_r2), ft_a['f']]
+            
+            ax1.set_xlim(self.lastParam_startFreq, self.lastParam_stopFreq)
+            self.fa_canvas.draw()
+        
+    def updateCombStatusText(self):
+        lowFreq = min(self.ui.startFreq_box.value(),self.ui.stopFreq_box.value())
+        highFreq = max(self.ui.startFreq_box.value(),self.ui.stopFreq_box.value())
+        numModes = self.ui.combNumModes_box.value()
+        scanCycles = self.ui.combNumCycles_box.value()
+        f_rep = float(highFreq-lowFreq)/(numModes-1)
+                
+        self.ui.combStatusBox.setText('Length of scan (s):\t' + str(float(scanCycles)/f_rep) + '\n' + 
+                                        'Repetition Freq (Hz):\t' + str(f_rep))
+                                        
+    def combScan(self):
+        self.lastParam_startFreq = self.ui.startFreq_box.value()
+        self.lastParam_stopFreq  = self.ui.stopFreq_box.value()
+        self.lastParam_scanTime  = self.ui.scanTime_box.value()
+        self.lastParam_gain      = self.ui.gainSlider.value()*.01
+        
+        lowFreq = min(self.ui.startFreq_box.value(),self.ui.stopFreq_box.value())
+        highFreq = max(self.ui.startFreq_box.value(),self.ui.stopFreq_box.value())
+        numModes = self.ui.combNumModes_box.value()
+        scanCycles = self.ui.combNumCycles_box.value()
+        f_rep = float(highFreq-lowFreq)/(numModes-1)
+        
+        self.audioSignal = self.lastParam_gain * self.generateComb(f_rep,lowFreq,numModes,float(scanCycles)/f_rep, mode = 'rand')
+        self.recording = self.playRec(self.audioSignal)
+        
+        print 'asdf'+str(len(self.audioSignal))
+        print 'asdf'+str(len(self.recording))
+        
  
 if __name__ == "__main__":
         app = QtGui.QApplication(sys.argv)
