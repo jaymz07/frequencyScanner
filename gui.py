@@ -30,36 +30,48 @@ class MyDialog(QtGui.QDialog):
         # a figure instance to plot on
         self.td_figure = Figure()
         self.fa_figure = Figure()
+        self.d_figure = Figure()
 
         # this is the Canvas Widget that displays the `figure`
         # it takes the `figure` instance as a parameter to __init__
         self.td_canvas = FigureCanvas(self.td_figure)
         self.fa_canvas = FigureCanvas(self.fa_figure)
+        self.d_canvas = FigureCanvas(self.d_figure)
 
         # this is the Navigation widget
         # it takes the Canvas widget and a parent
         self.td_toolbar = NavigationToolbar(self.td_canvas, self)
         self.fa_toolbar = NavigationToolbar(self.fa_canvas, self)
+        self.d_toolbar = NavigationToolbar(self.d_canvas, self)
         #--------        
         
         self.ui.setupUi(self)
         
         self.ui.plot_layout.addWidget(self.td_toolbar)
         self.ui.fa_plotLayout.addWidget(self.fa_toolbar)
+        self.ui.delay_plotLayout.addWidget(self.d_toolbar)        
+        
         self.ui.plot_layout.addWidget(self.td_canvas)
         self.ui.fa_plotLayout.addWidget(self.fa_canvas)
+        self.ui.delay_plotLayout.addWidget(self.d_canvas)
         
         self.ui.scanButton.clicked.connect(self.scan)
         self.ui.analysisButton.clicked.connect(self.plotFreqAnalysis)
+        self.ui.delayTestButton.clicked.connect(self.delayTest)
         self.ui.saveButton.clicked.connect(self.saveData)
         self.ui.loadButton.clicked.connect(self.loadData)
         
         self.ui.combNumModes_box.valueChanged.connect(self.updateCombStatusText)
         self.ui.combNumCycles_box.valueChanged.connect(self.updateCombStatusText)
+        self.ui.delay_box.valueChanged.connect(self.updateDelay)
         self.updateCombStatusText()
         
         print self.ui.analysisMethod_box.currentIndex()
         
+        self.delay = 0.0
+        
+        
+#----------------Plot Functions-------------------
     def plotClear(self,fig,canv, data, x=None):
         # create an axis
         ax = fig.add_subplot(111)
@@ -82,10 +94,12 @@ class MyDialog(QtGui.QDialog):
         ax.plot(data)
         # refresh canvas
         self.canvas.draw()
-    def plotTriple(self, fig, canv, dat1,dat2,dat3, x=None):
+    def plotTriple(self, fig, canv, dat1,dat2,dat3, x=None, clear = False):
         ax1 = fig.add_subplot(311)        
         # discards the old graph
-        ax1.clear()
+        
+        if(clear):
+            ax1.clear()
         
         # plot data
         if(x is not None):
@@ -93,15 +107,23 @@ class MyDialog(QtGui.QDialog):
         else:
             ax1.plot(dat1)
         ax2 = fig.add_subplot(312,sharex=ax1)
+        if(clear):
+            ax2.clear()
         if(x is not None):
             ax2.plot(x,dat2)
         else:
             ax2.plot(dat2)
         ax3 = fig.add_subplot(313,sharex=ax1)
+        if(clear):
+            ax3.clear()
         if(x is not None):
             ax3.plot(x,dat3)
         else:
             ax3.plot(dat3)
+            
+        ax1.grid()
+        ax2.grid()
+        ax3.grid()
             
         # refresh canvas
         canv.draw()
@@ -136,11 +158,7 @@ class MyDialog(QtGui.QDialog):
         
         return ax1, ax2, ax3
         
-    def fft(self,datX,datY):
-        rangeX=max(datX) - min(datX)
-        ft = np.fft.fft(datY)
-        return {'f' : [i/rangeX for i in range(1,len(datX)+1)[::-1]], 'y' : ft[::-1]}
-        
+#--------------Signal generators---------------------
     def generateTimeAxis(self,scanTime):
         return np.linspace(0,scanTime,scanTime*self.sampleRate)
         
@@ -168,7 +186,32 @@ class MyDialog(QtGui.QDialog):
             return "Mode Error in generateComb"
         return out/max(np.abs(out))
                 
-                
+    def generateDelayTestSignal(self,length, pulseDuration, freq):
+        t = self.generateTimeAxis(length)
+        outSignal = np.array([0.0]*len(t))
+        
+        centers = [length/4, length*2.0/4 - length/20.0, length*2.0/4 + length/20.0, length*3.0/4, length*3.0/4 - length/20.0, length*3.0/4 + length/20.0]
+        
+        def halfExp(x):
+            out = []
+            for xp in x:
+                if(xp<0):
+                    out.append( np.exp(xp))
+                else:
+                    out.append(np.exp(-xp*10))
+            return np.array(out)
+        
+        for c in centers:
+            outSignal += halfExp((t-c)/pulseDuration)*np.sin(2*np.pi* freq *t)
+        
+        return outSignal
+        
+        
+#-----------------Worker Functions-------------------------        
+    def fft(self,datX,datY):
+        rangeX=max(datX) - min(datX)
+        ft = np.fft.fft(datY)
+        return {'f' : [i/rangeX for i in range(1,len(datX)+1)[::-1]], 'y' : ft[::-1]}
         
     def freqScan(self,startFreq, stopFreq, scanTime, gain):
         if(self.ui.radio_discSweep.isChecked()):
@@ -184,9 +227,12 @@ class MyDialog(QtGui.QDialog):
         return recording, audioSignal
     
     def playRec(self,audioSig):
-        rec = sd.playrec(audioSig,samplerate=self.sampleRate, channels = 2)
+        numDelaySamples = int(round(self.delay*self.sampleRate))
+        delaySamples = np.array([0.0]*numDelaySamples)
+        signal = np.concatenate( (audioSig,delaySamples) )
+        rec = sd.playrec(signal,samplerate=self.sampleRate, channels = 2)
         sd.wait()
-        return rec
+        return rec[numDelaySamples::]
         
     def waveletAnalysis(self,t, dat, startFreq, stopFreq, numWavs):
         #sweep = self.generateFreqSweep(startFreq,stopFreq,len(dat)/self.sampleRate,1.0)
@@ -293,6 +339,22 @@ class MyDialog(QtGui.QDialog):
             ld = pickle.load(fHandle)
             self.timeAxis, self.audioSignal, self.recording = ld['t'], ld['signal'], np.array(zip(ld['r1'],ld['r2']))
             self.plotTriple(self.td_figure, self.td_canvas, self.audioSignal, self.recording[:,0], self.recording[:,1])
+    
+    def updateDelay(self):
+        self.delay = self.ui.delay_box.value()/1000
+            
+    def delayTest(self):
+        freq, duration = 1e3, 0.05
+        
+        testLength = 4.0*self.ui.maxDelay_box.value()
+        signal = self.generateDelayTestSignal(testLength,duration, freq)
+        
+        self.delayRecording = self.playRec(signal)
+        
+        self.plotTriple(self.d_figure, self.d_canvas, signal, self.delayRecording[:,0], self.delayRecording[:,1], x = self.generateTimeAxis(testLength) * 1000, clear = True)
+            
+        
+    #def delayTest(self):
  
 if __name__ == "__main__":
         app = QtGui.QApplication(sys.argv)
