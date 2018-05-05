@@ -5,7 +5,8 @@ Created on Wed May  2 20:32:16 2018
 @author: jaymz
 """
 
-import sys
+import sys, os
+import pickle
 from PyQt4 import QtCore, QtGui
 from form import Ui_Dialog
 
@@ -50,6 +51,8 @@ class MyDialog(QtGui.QDialog):
         
         self.ui.scanButton.clicked.connect(self.scan)
         self.ui.analysisButton.clicked.connect(self.plotFreqAnalysis)
+        self.ui.saveButton.clicked.connect(self.saveData)
+        self.ui.loadButton.clicked.connect(self.loadData)
         
         self.ui.combNumModes_box.valueChanged.connect(self.updateCombStatusText)
         self.ui.combNumCycles_box.valueChanged.connect(self.updateCombStatusText)
@@ -127,6 +130,10 @@ class MyDialog(QtGui.QDialog):
         # refresh canvas
         canv.draw()
         
+        ax1.grid()
+        ax2.grid()
+        ax3.grid()
+        
         return ax1, ax2, ax3
         
     def fft(self,datX,datY):
@@ -138,25 +145,25 @@ class MyDialog(QtGui.QDialog):
         return np.linspace(0,scanTime,scanTime*self.sampleRate)
         
     def generateFreqSweep(self,startFreq, stopFreq, scanTime, gain, mode='cont'):
-        t = self.generateTimeAxis(scanTime)
+        self.timeAxis = self.generateTimeAxis(scanTime)
         if(mode == 'cont'):
-            freq = startFreq + (stopFreq - startFreq)/2/scanTime*t
-            return gain*np.sin(2*np.pi*freq*t)
+            freq = startFreq + (stopFreq - startFreq)/2/scanTime*self.timeAxis
+            return gain*np.sin(2*np.pi*freq*self.timeAxis)
         elif(mode == 'disc'):
-            freq = startFreq + (stopFreq - startFreq)/2/scanTime*t
+            freq = startFreq + (stopFreq - startFreq)/2/scanTime*self.timeAxis
             print "Discreet Scan"
-            return gain*np.sin(2*np.pi*freq*t)
+            return gain*np.sin(2*np.pi*freq*self.timeAxis)
         return 'Sweep Mode ERROR'
     
     def generateComb(self, fRep, fStart, numModes, scanTime, mode = 'fixed'):
-        t = self.generateTimeAxis(scanTime)
-        out = np.array([0.0]*len(t))
+        self.timeAxis = self.generateTimeAxis(scanTime)
+        out = np.array([0.0]*len(self.timeAxis))
         if(mode=='fixed'):
             for n in range(0,numModes):
-                out += np.sin(2*np.pi*(fStart + n*fRep)*t)
+                out += np.sin(2*np.pi*(fStart + n*fRep)*self.timeAxis)
         elif(mode=='rand'):
             for n in range(0,numModes):
-                out += np.sin(2*np.pi*(fStart + n*fRep)*t + np.pi*2*np.random.random())
+                out += np.sin(2*np.pi*(fStart + n*fRep)*self.timeAxis + np.pi*2*np.random.random())
         else:
             return "Mode Error in generateComb"
         return out/max(np.abs(out))
@@ -212,7 +219,7 @@ class MyDialog(QtGui.QDialog):
         else:
             print "Radio Button Error?"
           
-        self.plotTriple(self.td_figure,self.td_canvas,self.audioSignal,self.recording[:,0],self.recording[:,1],x=np.linspace(self.lastParam_startFreq,self.lastParam_stopFreq,len(self.audioSignal)))
+        self.plotTriple(self.td_figure,self.td_canvas,self.audioSignal,self.recording[:,0]/max(self.recording[:,0]),self.recording[:,1]/max(self.recording[:,1]),x=np.linspace(self.lastParam_startFreq,self.lastParam_stopFreq,len(self.audioSignal)))
         
         self.ui.numWavelets_box.setMaximum(len(self.recording))
         
@@ -228,10 +235,9 @@ class MyDialog(QtGui.QDialog):
             self.fa_canvas.draw()
             
         if(self.ui.analysisMethod_box.currentText() == 'FFT'):
-            t = np.linspace(0,scanTime,len(self.audioSignal))
-            ft_a  = self.fft(t, self.audioSignal)
-            ft_r1 = self.fft(t, self.recording[:,0])
-            ft_r2 = self.fft(t, self.recording[:,1])
+            ft_a  = self.fft(self.timeAxis, self.audioSignal)
+            ft_r1 = self.fft(self.timeAxis, self.recording[:,0])
+            ft_r2 = self.fft(self.timeAxis, self.recording[:,1])
             
             a_a, a_r1, a_r2 = np.abs(ft_a['y']), np.abs(ft_r1['y']), np.abs(ft_r2['y'])
             
@@ -273,6 +279,20 @@ class MyDialog(QtGui.QDialog):
         print 'asdf'+str(len(self.audioSignal))
         print 'asdf'+str(len(self.recording))
         
+    def saveData(self):        
+        fileName = QtGui.QFileDialog.getSaveFileName(self, 'Save Data as', os.getcwd())#, selectedFilter='*.fscn')
+        if fileName:
+            fHandle = open(fileName,'w')
+            pickle.dump({'t' : self.timeAxis, 'signal' : self.audioSignal, 'r1' : self.recording[:,0], 'r2' : self.recording[:,1]}, fHandle)
+            fHandle.close()
+            
+    def loadData(self):
+        fileName = QtGui.QFileDialog.getOpenFileName(self, 'Save Data as', os.getcwd())
+        if(fileName):
+            fHandle = open(fileName)
+            ld = pickle.load(fHandle)
+            self.timeAxis, self.audioSignal, self.recording = ld['t'], ld['signal'], np.array(zip(ld['r1'],ld['r2']))
+            self.plotTriple(self.td_figure, self.td_canvas, self.audioSignal, self.recording[:,0], self.recording[:,1])
  
 if __name__ == "__main__":
         app = QtGui.QApplication(sys.argv)
